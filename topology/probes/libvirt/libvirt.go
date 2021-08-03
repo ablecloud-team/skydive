@@ -285,11 +285,13 @@ func (itf *Interface) ProcessNode(g *graph.Graph, node *graph.Node) bool {
 	if err := tr.Commit(); err != nil {
 		itf.Ctx.Logger.Errorf("Metadata transaction failed: %s", err)
 	}
-
 	if !topology.HaveLink(g, node, itf.Ctx.RootNode, "vlayer2") {
 		if _, err := topology.AddLink(g, node, itf.Ctx.RootNode, "vlayer2", nil); err != nil {
 			itf.Ctx.Logger.Error(err)
 		}
+	}
+	if !topology.HaveOwnershipLink(itf.Ctx.Graph, itf.Ctx.RootNode, node) {
+		topology.AddOwnershipLink(itf.Ctx.Graph, itf.Ctx.RootNode, node, nil)
 	}
 	return false
 }

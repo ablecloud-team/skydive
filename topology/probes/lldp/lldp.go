@@ -144,11 +144,15 @@ func (p *Probe) handlePacket(n *graph.Node, ifName string, packet gopacket.Packe
 
 		portLLDPMetadata := &Metadata{
 			PortIDType: lldpLayer.PortID.Subtype.String(),
+			SysName:    lldpLayer.PortID.Subtype.String(),
 		}
+
+		// fmt.Println(p.interfaceMap[ifName].Ctx.Graph.GetHost())
+
 		portMetadata := graph.Metadata{
-			"LLDP":  portLLDPMetadata,
-			"Type":  "switchport",
-			"Probe": "lldp",
+			"LLDP":          portLLDPMetadata,
+			"Type":          "switchport",
+			"RemoteSysName": p.interfaceMap[ifName].Ctx.Graph.GetHost(),
 		}
 
 		var portID string
@@ -170,7 +174,10 @@ func (p *Probe) handlePacket(n *graph.Node, ifName string, packet gopacket.Packe
 					return
 				}
 				portLLDPMetadata.Description = portDescription
-				portMetadata["Name"] = bytesToString([]byte(portDescription))
+
+				if bytesToString([]byte(portDescription)) != " " {
+					portMetadata["Name"] = bytesToString([]byte(portDescription))
+				}
 			}
 
 			if lldpLayerInfo.SysDescription != "" {

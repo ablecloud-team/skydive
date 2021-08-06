@@ -28,9 +28,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/avast/retry-go"
 	"github.com/vishvananda/netlink"
 
+	"github.com/skydive-project/skydive/common"
 	"github.com/skydive-project/skydive/graffiti/graph"
 	"github.com/skydive-project/skydive/graffiti/logging"
 	"github.com/skydive-project/skydive/topology"
@@ -81,7 +81,7 @@ func readIntFile(path string) (int, error) {
 }
 
 /* ProcessNode, the action associated to a pendingVf connects the node of actual
-   virtual to the VF node associated to the physical interface */
+virtual to the VF node associated to the physical interface */
 func (pending *pendingVf) ProcessNode(g *graph.Graph, node *graph.Node) bool {
 	tr := g.StartMetadataTransaction(node)
 	tr.AddMetadata("VfID", int64(pending.vfid))
@@ -100,7 +100,7 @@ func (pending *pendingVf) ProcessNode(g *graph.Graph, node *graph.Node) bool {
 var errZeroVfs = errors.New("zero VFS")
 
 /* handleSriov adds a node for each virtual function declared. It takes
-   care of finding the PCI address of each VF */
+care of finding the PCI address of each VF */
 func (u *Probe) handleSriov(
 	graph *graph.Graph,
 	intf *graph.Node,
@@ -123,7 +123,7 @@ func (u *Probe) handleSriov(
 		// There is no VFS to monitor.
 		return
 	}
-	err = retry.Do(
+	err = common.Retry(
 		func() error {
 			numVfs, err = readIntFile(numVfsFile)
 			if err != nil {
@@ -133,13 +133,13 @@ func (u *Probe) handleSriov(
 				return errZeroVfs
 			}
 			return nil
-		}, retry.Delay(10*time.Millisecond))
+		}, 10, time.Second)
 	if err != nil && err != errZeroVfs {
 		logging.GetLogger().Errorf(
 			"SR-IOV: cannot get numvfs of PCI - %s", err)
 		return
 	}
-	err = retry.Do(
+	err = common.Retry(
 		func() error {
 			link, err = netlink.LinkByIndex(id)
 			if err != nil {
@@ -150,7 +150,7 @@ func (u *Probe) handleSriov(
 				return errors.New("numVFS != #attrs.Vfs")
 			}
 			return nil
-		}, retry.Delay(10*time.Millisecond))
+		}, 10, time.Second)
 
 	if err != nil {
 		logging.GetLogger().Errorf(

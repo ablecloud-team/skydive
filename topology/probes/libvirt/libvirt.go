@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	libvirt "github.com/digitalocean/go-libvirt"
 
@@ -290,8 +291,8 @@ func (itf *Interface) ProcessNode(g *graph.Graph, node *graph.Node) bool {
 			itf.Ctx.Logger.Error(err)
 		}
 	}
-	if !topology.HaveOwnershipLink(itf.Ctx.Graph, itf.Ctx.RootNode, node) {
-		topology.AddOwnershipLink(itf.Ctx.Graph, itf.Ctx.RootNode, node, nil)
+	if !topology.HaveVnetOwnershipLink(g, node, itf.Ctx.RootNode) {
+		topology.AddVnetOwnershipLink(g, node, itf.Ctx.RootNode, node.Metadata)
 	}
 	return false
 }
@@ -400,6 +401,8 @@ func (probe *Probe) Do(ctx context.Context, wg *sync.WaitGroup) error {
 	if err != nil {
 		return err
 	}
+	// To read non-libvirt interfaces from "func handleNode (lldp.go)"
+	time.Sleep(1000 * time.Millisecond)
 
 	for _, domain := range domains {
 		domainNode := probe.createOrUpdateDomain(domain)

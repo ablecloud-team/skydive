@@ -114,6 +114,11 @@ func HaveOwnershipLink(g *graph.Graph, parent *graph.Node, child *graph.Node) bo
 	return HaveLink(g, parent, child, OwnershipLink)
 }
 
+// HaveOwnershipLink returns true if parent and child have an ownership link
+func HaveVnetOwnershipLink(g *graph.Graph, parent *graph.Node, child *graph.Node) bool {
+	return HaveLink(g, child, parent, OwnershipLink)
+}
+
 // IsOwnershipLinked checks whether the node has an OwnershipLink
 func IsOwnershipLinked(g *graph.Graph, node *graph.Node) bool {
 	edges := g.GetNodeEdges(node, OwnershipMetadata())
@@ -140,6 +145,20 @@ func AddOwnershipLink(g *graph.Graph, parent *graph.Node, child *graph.Node, met
 	return AddLink(g, parent, child, OwnershipLink, metadata)
 }
 
+// AddOwnershipLink Link between the parent and the child node, the child can have only one parent, previous will be overwritten
+func AddVnetOwnershipLink(g *graph.Graph, child *graph.Node, parent *graph.Node, metadata graph.Metadata) (*graph.Edge, error) {
+	// a child node can only have one parent of type ownership, so delete the previous link
+	for _, e := range g.GetNodeEdges(child, OwnershipMetadata()) {
+		if e.Child == child.ID {
+			logging.GetLogger().Debugf("Delete previous ownership link: %v", e)
+			if err := g.DelEdge(e); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return AddVnetLink(g, parent, child, OwnershipLink, metadata)
+}
+
 // HaveLink returns true if parent and child are linked
 func HaveLink(g *graph.Graph, node1 *graph.Node, node2 *graph.Node, relationType string) bool {
 	return g.AreLinked(node1, node2, graph.Metadata{"RelationType": relationType})
@@ -162,6 +181,15 @@ func NewLink(g *graph.Graph, node1 *graph.Node, node2 *graph.Node, relationType 
 
 // AddLink links the parent and the child node with the specified relation type and metadata
 func AddLink(g *graph.Graph, node1 *graph.Node, node2 *graph.Node, relationType string, metadata graph.Metadata) (*graph.Edge, error) {
+	edge, err := NewLink(g, node1, node2, relationType, metadata)
+	if err != nil {
+		return nil, err
+	}
+	return edge, g.AddEdge(edge)
+}
+
+// AddVnetLink. It has been changed node1 and node2 to each other
+func AddVnetLink(g *graph.Graph, node1 *graph.Node, node2 *graph.Node, relationType string, metadata graph.Metadata) (*graph.Edge, error) {
 	edge, err := NewLink(g, node1, node2, relationType, metadata)
 	if err != nil {
 		return nil, err

@@ -291,8 +291,8 @@ func (itf *Interface) ProcessNode(g *graph.Graph, node *graph.Node) bool {
 			itf.Ctx.Logger.Error(err)
 		}
 	}
-	if !topology.HaveVnetOwnershipLink(g, node, itf.Ctx.RootNode) {
-		topology.AddVnetOwnershipLink(g, node, itf.Ctx.RootNode, node.Metadata)
+	if !topology.HaveVnetOwnershipLink(g, itf.Ctx.RootNode, node) {
+		topology.AddVnetOwnershipLink(g, itf.Ctx.RootNode, node, nil)
 	}
 	return false
 }

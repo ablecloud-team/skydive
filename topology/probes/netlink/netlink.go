@@ -860,6 +860,11 @@ func (u *Probe) onNeighborsChanged(index int64, fdb *topology.Neighbors, neighbo
 	defer u.Ctx.Graph.Unlock()
 
 	intf := u.Ctx.Graph.LookupFirstChild(u.Ctx.RootNode, graph.Metadata{"IfIndex": index})
+
+	if intf == nil {
+		u.initialize()
+		intf = u.Ctx.Graph.LookupFirstChild(u.Ctx.RootNode, graph.Metadata{"IfIndex": index})
+	}
 	if intf == nil {
 		if _, err := u.handle.LinkByIndex(int(index)); err == nil {
 			u.Ctx.Logger.Errorf("Unable to find interface with index %d to add a new neighbors", index)

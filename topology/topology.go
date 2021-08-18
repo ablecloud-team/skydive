@@ -146,7 +146,7 @@ func AddOwnershipLink(g *graph.Graph, parent *graph.Node, child *graph.Node, met
 }
 
 // AddOwnershipLink Link between the parent and the child node, the child can have only one parent, previous will be overwritten
-func AddVnetOwnershipLink(g *graph.Graph, child *graph.Node, parent *graph.Node, metadata graph.Metadata) (*graph.Edge, error) {
+func AddVnetOwnershipLink(g *graph.Graph, parent *graph.Node, child *graph.Node, metadata graph.Metadata) (*graph.Edge, error) {
 	// a child node can only have one parent of type ownership, so delete the previous link
 	for _, e := range g.GetNodeEdges(child, OwnershipMetadata()) {
 		if e.Child == child.ID {

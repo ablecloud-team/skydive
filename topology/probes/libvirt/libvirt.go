@@ -20,10 +20,13 @@
 package libvirt
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -277,7 +280,30 @@ func (itf *Interface) ProcessNode(g *graph.Graph, node *graph.Node) bool {
 		Alias:   alias,
 	}
 
+	// Get DomainInterface's Name and Ipv4 Address using "virsh domifaddr"
+	c, b := exec.Command("virsh", "domifaddr", "--full", "--source", "agent", "--domain", itf.Ctx.RootNode.Metadata["Name"].(string)), new(bytes.Buffer)
+	c.Stdout = b
+	c.Run()
+	s := bufio.NewScanner(b)
+
+	var itfName string
+	var itfAddr string
+
+	for s.Scan() {
+		if strings.Contains(s.Text(), itf.Mac.Address) {
+			if strings.Contains(s.Text(), "ipv4") {
+				s1 := strings.Fields(s.Text())
+				itfName = s1[0]
+				itfAddr = s1[3]
+			}
+		}
+	}
+
 	tr := g.StartMetadataTransaction(node)
+
+	tr.AddMetadata("IfName", itfName)
+	tr.AddMetadata("IfAddr", itfAddr)
+
 	if itf.Mac != nil {
 		metadata.MAC = itf.Mac.Address
 		tr.AddMetadata("PeerIntfMAC", itf.Mac.Address)

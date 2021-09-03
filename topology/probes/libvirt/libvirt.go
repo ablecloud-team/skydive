@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -299,6 +300,12 @@ func (itf *Interface) ProcessNode(g *graph.Graph, node *graph.Node) bool {
 		}
 	}
 
+	// To fix abnormal itfName
+	re := regexp.MustCompile(`[^A-Za-z0-9]+`)
+	if re.MatchString(itfName) {
+		itfName = ""
+	}
+
 	tr := g.StartMetadataTransaction(node)
 
 	tr.AddMetadata("IfName", itfName)
@@ -317,8 +324,8 @@ func (itf *Interface) ProcessNode(g *graph.Graph, node *graph.Node) bool {
 			itf.Ctx.Logger.Error(err)
 		}
 	}
-	if !topology.HaveVnetOwnershipLink(g, itf.Ctx.RootNode, node) {
-		topology.AddVnetOwnershipLink(g, itf.Ctx.RootNode, node, nil)
+	if !topology.HaveLink(g, itf.Ctx.RootNode, node, "vownership") {
+		topology.AddLink(g, itf.Ctx.RootNode, node, "vownership", nil)
 	}
 	return false
 }
@@ -427,7 +434,7 @@ func (probe *Probe) Do(ctx context.Context, wg *sync.WaitGroup) error {
 	if err != nil {
 		return err
 	}
-	// To read non-libvirt interfaces from "func handleNode (lldp.go)"
+	// To read first non-libvirt interfaces from "func handleNode (lldp.go)"
 	time.Sleep(1000 * time.Millisecond)
 
 	for _, domain := range domains {

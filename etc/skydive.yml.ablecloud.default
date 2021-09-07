@@ -1,0 +1,12 @@
+# Skydive config file
+
+# list of analyzers used by analyzers and agents
+analyzers:
+- 127.0.0.1:8082
+
+agent:
+  topology:
+    probes:
+      - socketinfo
+      - lldp
+      - libvirt

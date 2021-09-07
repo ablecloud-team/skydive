@@ -199,17 +199,21 @@ func NewServer(server *shttp.Server, assetsFolder string) *Server {
 	// server index for the following url as the client side will redirect
 	// the user to the correct page
 	routes := []shttp.Route{
-		{Path: "/", Method: "GET", HandlerFunc: s.ServeIndex("statics/ui/index.html", "/ui/")},
-		{Path: "/ui/", Method: "GET", HandlerFunc: s.ServeIndex("statics/ui/index.html", "/ui/")},
-		{Path: "/ui/login", Method: "GET", HandlerFunc: s.ServeIndex("statics/ui/index.html", "/ui/")},
-		{Path: "/ui/topology", Method: "GET", HandlerFunc: s.ServeIndex("statics/ui/index.html", "/ui/")},
-		{Path: "/ui/preference", Method: "GET", HandlerFunc: s.ServeIndex("statics/ui/index.html", "/ui/")},
-		{Path: "/ui/status", Method: "GET", HandlerFunc: s.ServeIndex("statics/ui/index.html", "/ui/")},
+		{Path: "/", Method: "GET", HandlerFunc: s.ServeIndex("statics/ui_v2/index.html", "/ui_v2/")},
+		{Path: "/ui/", Method: "GET", HandlerFunc: s.ServeIndex("statics/ui_v2/index.html", "/ui_v2/")},
+		// {Path: "/ui/login", Method: "GET", HandlerFunc: s.ServeIndex("statics/ui/index.html", "/ui/")},
+		{Path: "/ui/topology", Method: "GET", HandlerFunc: s.ServeIndex("statics/ui_v2/index.html", "/ui_v2/")},
+		// {Path: "/ui/preference", Method: "GET", HandlerFunc: s.ServeIndex("statics/ui/index.html", "/ui/")},
+		// {Path: "/ui/status", Method: "GET", HandlerFunc: s.ServeIndex("statics/ui/index.html", "/ui/")},
 	}
 	server.RegisterRoutes(routes, shttp.NewNoAuthenticationBackend())
 
 	router.PathPrefix("/ui/").HandlerFunc(s.serveStatics())
 	router.PathPrefix(ExtraAssetPrefix).HandlerFunc(s.serveStatics())
+
+	// v1
+	router.HandleFunc("/ui_v1", shttp.NoAuthenticationWrap(s.ServeIndex("statics/ui/index.html", "/ui/")))
+	router.PathPrefix("/ui_v1/").HandlerFunc(s.serveStatics())
 
 	// v2
 	router.HandleFunc("/ui_v2", shttp.NoAuthenticationWrap(s.ServeIndex("statics/ui_v2/index.html", "/ui_v2/")))

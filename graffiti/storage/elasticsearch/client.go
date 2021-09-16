@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -29,6 +30,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hashicorp/go-multierror"
 	version "github.com/hashicorp/go-version"
 	uuid "github.com/nu7hatch/gouuid"
 	elastic "github.com/olivere/elastic/v7"
@@ -43,6 +45,11 @@ import (
 const (
 	schemaVersion  = "13"
 	minimalVersion = "7.0"
+	// scrollBatchSize is the number of documents in each request of the Scroll API.
+	// We keep the same value as for the search API.
+	// If needed this value could be probably increased at least 10x.
+	// https://www.elastic.co/guide/en/elasticsearch/guide/current/bulk.html#_how_big_is_too_big
+	scrollBatchSize = 10000
 )
 
 var errOutdatedVersion = errors.New("elasticsearch server doesn't match the minimal required version")
@@ -73,6 +80,7 @@ type ClientInterface interface {
 	Delete(index Index, id string) (*elastic.DeleteResponse, error)
 	BulkDelete(index Index, id string) error
 	Search(query elastic.Query, pagination filters.SearchQuery, indices ...string) (*elastic.SearchResult, error)
+	Scroll(hits chan<- *elastic.SearchHit, query elastic.Query, pagination filters.SearchQuery, indices ...string) error
 	Start()
 	AddEventListener(listener storage.EventListener)
 	UpdateByScript(query elastic.Query, script *elastic.Script, indices ...string) error
@@ -509,7 +517,27 @@ func (c *Client) UpdateByScript(query elastic.Query, script *elastic.Script, ind
 	return nil
 }
 
-// Search an object
+// Scroll objects using the Scroll API. Send all hits to the hits channel.
+// Sort options are ignored, they impose a big performace hit.
+func (c *Client) Scroll(hits chan<- *elastic.SearchHit, query elastic.Query, opts filters.SearchQuery, indices ...string) error {
+	scrollQuery := c.esClient.Scroll(indices...).Query(query).Size(scrollBatchSize)
+	for {
+		results, err := scrollQuery.Do(context.Background())
+		if err == io.EOF {
+			return nil // all results retrieved
+		}
+		if err != nil {
+			return err // something went wrong
+		}
+
+		// Send the hits to the hits channel
+		for _, hit := range results.Hits.Hits {
+			hits <- hit
+		}
+	}
+}
+
+// Search an object. Maximum 10000 hits
 func (c *Client) Search(query elastic.Query, opts filters.SearchQuery, indices ...string) (*elastic.SearchResult, error) {
 	searchQuery := c.esClient.
 		Search().
@@ -532,7 +560,16 @@ func (c *Client) Search(query elastic.Query, opts filters.SearchQuery, indices .
 		})
 	}
 
-	return searchQuery.Do(context.Background())
+	res, err := searchQuery.Do(context.Background())
+	// Detect partial failures (only some shards failing)
+	if err == nil && res.Shards.Failed != 0 {
+		var shardErrors error
+		for _, f := range res.Shards.Failures {
+			shardErrors = multierror.Append(shardErrors, fmt.Errorf("node %s, index %s, shard %d: %v", f.Node, f.Index, f.Shard, f.Reason))
+		}
+		return nil, shardErrors
+	}
+	return res, err
 }
 
 // Start the Elasticsearch client background jobs

@@ -87,6 +87,8 @@ const graphElementMapping = `
 const (
 	nodeType = "node"
 	edgeType = "edge"
+	// maxClauseCount limit the number of clauses in one query to ES
+	maxClauseCount = 512
 )
 
 // ElasticSearchBackend describes a persistent backend based on ElasticSearch
@@ -233,7 +235,45 @@ func (b *ElasticSearchBackend) GetNode(i Identifier, t Context) []*Node {
 			SortBy: "Revision",
 		},
 		TimeFilter: getTimeFilter(t.TimeSlice),
-	})
+	}, false)
+
+	if len(nodes) > 1 && t.TimePoint {
+		return []*Node{nodes[len(nodes)-1]}
+	}
+
+	return nodes
+}
+
+// GetNodesFromIDs get the list of nodes for the list of identifiers within a time slice
+func (b *ElasticSearchBackend) GetNodesFromIDs(identifiersList []Identifier, t Context) []*Node {
+	if len(identifiersList) == 0 {
+		return []*Node{}
+	}
+
+	// ES default max number of clauses is set by default to 1024
+	// https://www.elastic.co/guide/en/elasticsearch/reference/current/search-settings.html
+	// Group queries in a maximum of half of the max.
+	// Other filters (time), will be also in the query.
+	identifiersBatch := batchIdentifiers(identifiersList, maxClauseCount)
+
+	nodes := []*Node{}
+
+	for _, idList := range identifiersBatch {
+		identifiersFilter := []*filters.Filter{}
+		for _, i := range idList {
+			identifiersFilter = append(identifiersFilter, filters.NewTermStringFilter("ID", string(i)))
+		}
+		identifiersORFilter := filters.NewOrFilter(identifiersFilter...)
+
+		nodes = append(nodes, b.searchNodes(&TimedSearchQuery{
+			SearchQuery: filters.SearchQuery{
+				Filter: identifiersORFilter,
+				Sort:   true,
+				SortBy: "Revision",
+			},
+			TimeFilter: getTimeFilter(t.TimeSlice),
+		}, false)...)
+	}
 
 	if len(nodes) > 1 && t.TimePoint {
 		return []*Node{nodes[len(nodes)-1]}
@@ -293,7 +333,7 @@ func (b *ElasticSearchBackend) GetEdge(i Identifier, t Context) []*Edge {
 			SortBy: "Revision",
 		},
 		TimeFilter: getTimeFilter(t.TimeSlice),
-	})
+	}, false)
 
 	if len(edges) > 1 && t.TimePoint {
 		return []*Edge{edges[len(edges)-1]}
@@ -335,7 +375,12 @@ func (b *ElasticSearchBackend) MetadataUpdated(i interface{}) error {
 }
 
 // Query the database for a "node" or "edge"
-func (b *ElasticSearchBackend) Query(typ string, tsq *TimedSearchQuery) (sr *elastic.SearchResult, _ error) {
+// Return a channel where the hits will be send.
+// Done channel indicates the query has finished
+func (b *ElasticSearchBackend) Query(typ string, tsq *TimedSearchQuery, scrollAPI bool, hits chan<- *elastic.SearchHit) {
+	// close the channel to notify the consumer that all data has been sent
+	defer close(hits)
+
 	fltrs := []elastic.Query{
 		es.FormatFilter(filters.NewTermStringFilter("_Type", typ), nil),
 	}
@@ -354,48 +399,60 @@ func (b *ElasticSearchBackend) Query(typ string, tsq *TimedSearchQuery) (sr *ela
 
 	mustQuery := elastic.NewBoolQuery().Must(fltrs...)
 
-	return b.client.Search(mustQuery, tsq.SearchQuery, b.liveIndex.Alias(b.indexPrefix), b.archiveIndex.IndexWildcard(b.indexPrefix))
+	if scrollAPI {
+		err := b.client.Scroll(hits, mustQuery, tsq.SearchQuery, b.liveIndex.Alias(b.indexPrefix), b.archiveIndex.IndexWildcard(b.indexPrefix))
+		if err != nil {
+			b.logger.Errorf("Failed to query ElasticSearch Scroll API: %v", err)
+		}
+	} else {
+		out, err := b.client.Search(mustQuery, tsq.SearchQuery, b.liveIndex.Alias(b.indexPrefix), b.archiveIndex.IndexWildcard(b.indexPrefix))
+		if err != nil {
+			b.logger.Errorf("Failed to query ElasticSearch Search API: %v", err)
+			return
+		}
+		// If the seach query is correct, send all the hits to the consumer
+		for _, h := range out.Hits.Hits {
+			hits <- h
+		}
+	}
 }
 
 // searchNodes search nodes matching the query
-func (b *ElasticSearchBackend) searchNodes(tsq *TimedSearchQuery) (nodes []*Node) {
-	out, err := b.Query(nodeType, tsq)
-	if err != nil {
-		b.logger.Errorf("Failed to query nodes: %s", err)
-		return
-	}
+func (b *ElasticSearchBackend) searchNodes(tsq *TimedSearchQuery, scrollAPI bool) (nodes []*Node) {
+	// Channel to get results from the query
+	hits := make(chan *elastic.SearchHit, 100)
 
-	if out != nil && len(out.Hits.Hits) > 0 {
-		for _, d := range out.Hits.Hits {
-			var node Node
-			if err := json.Unmarshal(d.Source, &node); err != nil {
-				b.logger.Errorf("Failed to unmarshal node %s: %s", err, string(d.Source))
-				continue
-			}
-			nodes = append(nodes, &node)
+	// New goroutine to execute the get the data from ElasticSearch
+	go b.Query(nodeType, tsq, scrollAPI, hits)
+
+	// Get all the hits till the channel is closed by the producer (elasticsearch client)
+	for d := range hits {
+		var node Node
+		if err := json.Unmarshal(d.Source, &node); err != nil {
+			b.logger.Errorf("Failed to unmarshal node %s: %s", err, string(d.Source))
+			continue
 		}
+		nodes = append(nodes, &node)
 	}
 
 	return
 }
 
 // searchEdges search edges matching the query
-func (b *ElasticSearchBackend) searchEdges(tsq *TimedSearchQuery) (edges []*Edge) {
-	out, err := b.Query(edgeType, tsq)
-	if err != nil {
-		b.logger.Errorf("Failed to query edges: %s", err)
-		return
-	}
+func (b *ElasticSearchBackend) searchEdges(tsq *TimedSearchQuery, scrollAPI bool) (edges []*Edge) {
+	// Channel to get results from the query
+	hits := make(chan *elastic.SearchHit, 100)
 
-	if out != nil && len(out.Hits.Hits) > 0 {
-		for _, d := range out.Hits.Hits {
-			var edge Edge
-			if err := json.Unmarshal(d.Source, &edge); err != nil {
-				b.logger.Errorf("Failed to unmarshal edge %s: %s", err, string(d.Source))
-				continue
-			}
-			edges = append(edges, &edge)
+	// New goroutine to execute the get the data from ElasticSearch
+	go b.Query(edgeType, tsq, scrollAPI, hits)
+
+	for d := range hits {
+		var edge Edge
+		if err := json.Unmarshal(d.Source, &edge); err != nil {
+			b.logger.Errorf("Failed to unmarshal edge %s: %s", err, string(d.Source))
+			continue
 		}
+		edges = append(edges, &edge)
 	}
 
 	return
@@ -403,6 +460,13 @@ func (b *ElasticSearchBackend) searchEdges(tsq *TimedSearchQuery) (edges []*Edge
 
 // GetEdges returns a list of edges within time slice, matching metadata
 func (b *ElasticSearchBackend) GetEdges(t Context, m ElementMatcher) []*Edge {
+	return b.getEdges(t, m, false)
+}
+
+// getEdges returns a list of edges within time slice, matching metadata
+// It uses the Search API if scrollAPI is false.
+// Otherwise, use the Scroll API.
+func (b *ElasticSearchBackend) getEdges(t Context, m ElementMatcher, scrollAPI bool) []*Edge {
 	var filter *filters.Filter
 	if m != nil {
 		f, err := m.Filter()
@@ -421,7 +485,7 @@ func (b *ElasticSearchBackend) GetEdges(t Context, m ElementMatcher) []*Edge {
 		SearchQuery:   searchQuery,
 		TimeFilter:    getTimeFilter(t.TimeSlice),
 		ElementFilter: filter,
-	})
+	}, scrollAPI)
 
 	if t.TimePoint {
 		edges = dedupEdges(edges)
@@ -432,6 +496,13 @@ func (b *ElasticSearchBackend) GetEdges(t Context, m ElementMatcher) []*Edge {
 
 // GetNodes returns a list of nodes within time slice, matching metadata
 func (b *ElasticSearchBackend) GetNodes(t Context, m ElementMatcher) []*Node {
+	return b.getNodes(t, m, false)
+}
+
+// getNodes returns a list of nodes within time slice, matching metadata.
+// It uses the Search API if scrollAPI is false.
+// Otherwise, use the Scroll API.
+func (b *ElasticSearchBackend) getNodes(t Context, m ElementMatcher, scrollAPI bool) []*Node {
 	var filter *filters.Filter
 	if m != nil {
 		f, err := m.Filter()
@@ -450,7 +521,7 @@ func (b *ElasticSearchBackend) GetNodes(t Context, m ElementMatcher) []*Node {
 		SearchQuery:   searchQuery,
 		TimeFilter:    getTimeFilter(t.TimeSlice),
 		ElementFilter: filter,
-	})
+	}, scrollAPI)
 
 	if len(nodes) > 1 && t.TimePoint {
 		nodes = dedupNodes(nodes)
@@ -497,7 +568,54 @@ func (b *ElasticSearchBackend) GetNodeEdges(n *Node, t Context, m ElementMatcher
 		SearchQuery:   searchQuery,
 		TimeFilter:    getTimeFilter(t.TimeSlice),
 		ElementFilter: filter,
-	})
+	}, false)
+
+	if len(edges) > 1 && t.TimePoint {
+		edges = dedupEdges(edges)
+	}
+
+	return
+}
+
+// GetNodesEdges return the list of all edges for a list of nodes within time slice
+func (b *ElasticSearchBackend) GetNodesEdges(nodeList []*Node, t Context, m ElementMatcher) (edges []*Edge) {
+	if len(nodeList) == 0 {
+		return []*Edge{}
+	}
+
+	// See comment at GetNodesFromIDs
+	// As we are adding two operations per item, make small batches
+	nodesBatch := batchNodes(nodeList, maxClauseCount/2)
+
+	for _, nList := range nodesBatch {
+		var filter *filters.Filter
+		if m != nil {
+			f, err := m.Filter()
+			if err != nil {
+				return []*Edge{}
+			}
+			filter = f
+		}
+
+		var searchQuery filters.SearchQuery
+		if !t.TimePoint {
+			searchQuery = filters.SearchQuery{Sort: true, SortBy: "UpdatedAt"}
+		}
+
+		nodesFilter := []*filters.Filter{}
+		for _, n := range nList {
+			nodesFilter = append(nodesFilter, filters.NewTermStringFilter("Parent", string(n.ID)))
+			nodesFilter = append(nodesFilter, filters.NewTermStringFilter("Child", string(n.ID)))
+		}
+		searchQuery.Filter = filters.NewOrFilter(nodesFilter...)
+
+		edges = append(edges, b.searchEdges(&TimedSearchQuery{
+			SearchQuery:   searchQuery,
+			TimeFilter:    getTimeFilter(t.TimeSlice),
+			ElementFilter: filter,
+		}, false)...)
+
+	}
 
 	if len(edges) > 1 && t.TimePoint {
 		edges = dedupEdges(edges)
@@ -548,7 +666,7 @@ func (b *ElasticSearchBackend) FlushElements(m ElementMatcher) error {
 // Sync adds all the nodes and edges with the specified filter into an other graph
 func (b *ElasticSearchBackend) Sync(g *Graph, elementFilter *ElementFilter) error {
 	// re-insert valid nodes and edges
-	for _, node := range b.GetNodes(Context{}, elementFilter) {
+	for _, node := range b.getNodes(Context{}, elementFilter, true) {
 		g.NodeAdded(node)
 
 		raw, err := nodeToRaw(node)
@@ -559,7 +677,7 @@ func (b *ElasticSearchBackend) Sync(g *Graph, elementFilter *ElementFilter) erro
 		b.prevRevision[node.ID] = raw
 	}
 
-	for _, edge := range b.GetEdges(Context{}, elementFilter) {
+	for _, edge := range b.getEdges(Context{}, elementFilter, true) {
 		g.EdgeAdded(edge)
 
 		raw, err := edgeToRaw(edge)
@@ -646,4 +764,27 @@ func NewElasticSearchBackendFromConfig(cfg es.Config, extraDynamicTemplates map[
 	}
 
 	return newElasticSearchBackendFromClient(client, cfg.IndexPrefix, liveIndex, archiveIndex, logger), nil
+}
+
+func batchNodes(items []*Node, batchSize int) [][]*Node {
+	batches := make([][]*Node, 0, (len(items)+batchSize-1)/batchSize)
+
+	for batchSize < len(items) {
+		items, batches = items[batchSize:], append(batches, items[0:batchSize:batchSize])
+	}
+	batches = append(batches, items)
+
+	return batches
+
+}
+
+func batchIdentifiers(items []Identifier, batchSize int) [][]Identifier {
+	batches := make([][]Identifier, 0, (len(items)+batchSize-1)/batchSize)
+
+	for batchSize < len(items) {
+		items, batches = items[batchSize:], append(batches, items[0:batchSize:batchSize])
+	}
+	batches = append(batches, items)
+
+	return batches
 }

@@ -20,12 +20,17 @@
 package libvirt
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	libvirt "github.com/digitalocean/go-libvirt"
 
@@ -276,7 +281,36 @@ func (itf *Interface) ProcessNode(g *graph.Graph, node *graph.Node) bool {
 		Alias:   alias,
 	}
 
+	// Get DomainInterface's Name and Ipv4 Address using "virsh domifaddr"
+	c, b := exec.Command("virsh", "domifaddr", "--full", "--source", "agent", "--domain", itf.Ctx.RootNode.Metadata["Name"].(string)), new(bytes.Buffer)
+	c.Stdout = b
+	c.Run()
+	s := bufio.NewScanner(b)
+
+	var itfName string
+	var itfAddr string
+
+	for s.Scan() {
+		if strings.Contains(s.Text(), itf.Mac.Address) {
+			if strings.Contains(s.Text(), "ipv4") {
+				s1 := strings.Fields(s.Text())
+				itfName = s1[0]
+				itfAddr = s1[3]
+			}
+		}
+	}
+
+	// To fix abnormal itfName
+	re := regexp.MustCompile(`[^A-Za-z0-9]+`)
+	if re.MatchString(itfName) {
+		itfName = ""
+	}
+
 	tr := g.StartMetadataTransaction(node)
+
+	tr.AddMetadata("IfName", itfName)
+	tr.AddMetadata("IfAddr", itfAddr)
+
 	if itf.Mac != nil {
 		metadata.MAC = itf.Mac.Address
 		tr.AddMetadata("PeerIntfMAC", itf.Mac.Address)
@@ -285,11 +319,13 @@ func (itf *Interface) ProcessNode(g *graph.Graph, node *graph.Node) bool {
 	if err := tr.Commit(); err != nil {
 		itf.Ctx.Logger.Errorf("Metadata transaction failed: %s", err)
 	}
-
 	if !topology.HaveLink(g, node, itf.Ctx.RootNode, "vlayer2") {
 		if _, err := topology.AddLink(g, node, itf.Ctx.RootNode, "vlayer2", nil); err != nil {
 			itf.Ctx.Logger.Error(err)
 		}
+	}
+	if !topology.HaveLink(g, itf.Ctx.RootNode, node, "vownership") {
+		topology.AddLink(g, itf.Ctx.RootNode, node, "vownership", nil)
 	}
 	return false
 }
@@ -398,6 +434,8 @@ func (probe *Probe) Do(ctx context.Context, wg *sync.WaitGroup) error {
 	if err != nil {
 		return err
 	}
+	// To read first non-libvirt interfaces from "func handleNode (lldp.go)"
+	time.Sleep(1000 * time.Millisecond)
 
 	for _, domain := range domains {
 		domainNode := probe.createOrUpdateDomain(domain)

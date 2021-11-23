@@ -112,14 +112,14 @@ func newMonitor(ctx context.Context, probe *Probe, wg *sync.WaitGroup) (*golibvi
 				}
 				d := golibvirtDomain{Libvirt: libvirt, Domain: event.Dom}
 				switch golibvirt.DomainEventType(event.Event) {
-				case golibvirt.DomainEventUndefined:
+				case golibvirt.DomainEventUndefined, golibvirt.DomainEventStopped:
 					probe.deleteDomain(d)
 				case golibvirt.DomainEventStarted, golibvirt.DomainEventDefined:
 					domainNode := probe.createOrUpdateDomain(d)
 					interfaces, hostdevs := probe.getDomainInterfaces(d, domainNode, "")
 					probe.registerInterfaces(interfaces, hostdevs)
 				case golibvirt.DomainEventSuspended,
-					golibvirt.DomainEventResumed, golibvirt.DomainEventStopped,
+					golibvirt.DomainEventResumed,
 					golibvirt.DomainEventShutdown, golibvirt.DomainEventPmsuspended,
 					golibvirt.DomainEventCrashed:
 					probe.createOrUpdateDomain(d)

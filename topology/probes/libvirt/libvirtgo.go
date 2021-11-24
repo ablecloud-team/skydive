@@ -109,14 +109,14 @@ func newMonitor(ctx context.Context, probe *Probe, wg *sync.WaitGroup) (*Libvirt
 		event *libvirtgo.DomainEventLifecycle,
 	) {
 		switch event.Event {
-		case libvirtgo.DOMAIN_EVENT_UNDEFINED:
+		case libvirtgo.DOMAIN_EVENT_UNDEFINED, libvirtgo.DOMAIN_EVENT_STOPPED:
 			probe.deleteDomain(libvirtgoDomain{*d})
 		case libvirtgo.DOMAIN_EVENT_STARTED:
 			domainNode := probe.createOrUpdateDomain(libvirtgoDomain{*d})
 			interfaces, hostdevs := probe.getDomainInterfaces(libvirtgoDomain{*d}, domainNode, "")
 			probe.registerInterfaces(interfaces, hostdevs)
 		case libvirtgo.DOMAIN_EVENT_DEFINED, libvirtgo.DOMAIN_EVENT_SUSPENDED,
-			libvirtgo.DOMAIN_EVENT_RESUMED, libvirtgo.DOMAIN_EVENT_STOPPED,
+			libvirtgo.DOMAIN_EVENT_RESUMED,
 			libvirtgo.DOMAIN_EVENT_SHUTDOWN, libvirtgo.DOMAIN_EVENT_PMSUSPENDED,
 			libvirtgo.DOMAIN_EVENT_CRASHED:
 			probe.createOrUpdateDomain(libvirtgoDomain{*d})

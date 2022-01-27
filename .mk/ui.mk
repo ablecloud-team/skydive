@@ -9,6 +9,7 @@ UI_DIRS := \
 UI_V2_DIRS := \
 	statics/ui_v2/index.html \
 	statics/ui_v2/assets \
+	statics/ui_v2/assets/icons \
 	statics/ui_v2/dist \
 	statics/ui_v2/fonts
 

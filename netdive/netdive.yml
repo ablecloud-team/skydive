@@ -1,0 +1,8 @@
+agent:
+  topology:
+    probes:
+    - socketinfo
+    - lldp
+    - libvirt
+analyzers:
+- 10.10.255.10:8082

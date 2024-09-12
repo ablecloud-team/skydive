@@ -18,6 +18,7 @@
 package forwarder
 
 import (
+    "os"
 	"github.com/skydive-project/skydive/graffiti/graph"
 	"github.com/skydive-project/skydive/graffiti/logging"
 	"github.com/skydive-project/skydive/graffiti/messages"
@@ -51,6 +52,8 @@ func (t *Forwarder) OnNewMaster(c ws.Speaker) {
 
 		// do not forward message before re-sync
 		t.graph.RemoveEventListener(t)
+
+		os.Exit(1)
 	} else {
 		addr, port := c.GetAddrPort()
 		t.logger.Infof("Using %s:%d as master of topology forwarder", addr, port)
